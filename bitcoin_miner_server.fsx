@@ -31,7 +31,7 @@ let configuration =
 type ActorMsg =
     | StartMining of int
     | MineCoins of int*int
-    | PrintCoins of string*string
+    | PrintCoins of string
     | StopMining
 let mutable count=0L //to keep track of the workers
 let actorCount = System.Environment.ProcessorCount
@@ -43,8 +43,8 @@ let PrintingActor (mailbox:Actor<_>)=
     let rec loop()=actor{
         let! msg = mailbox.Receive()
         match msg with
-        | PrintCoins(hash, input) -> 
-            ref <! "The input is = "+input+"    The hash value is "+ hash
+        | PrintCoins(result) -> 
+            ref <! result
             // printfn "The input is = %s   The hash value is %s" input hash
             
         | _ -> failwith "unknown message"
@@ -61,7 +61,7 @@ let MinerActor (mailbox:Actor<_>)=
         let! msg = mailbox.Receive()
         match msg with 
         | MineCoins(zeroCount, actorId) ->  let hashObj = SHA256Managed.Create()
-                                            for i in 100001 .. actorCount .. 200000 do
+                                            for i in 1000001 .. actorCount .. 2000000 do
                                                 let  input = "harinisrinivasan"+ string (i+actorId)
                                                 let hashString = input 
                                                                 |> System.Text.Encoding.ASCII.GetBytes 
@@ -70,11 +70,12 @@ let MinerActor (mailbox:Actor<_>)=
                                                                 |> Seq.reduce(+)
                                                 let isValidHash = int64 ("0x" + hashString.[0..zeroCount-1]) = 0L
                                                 
-                                                if isValidHash then printRef <! PrintCoins(hashString, input)
+                                                if isValidHash then printRef <! PrintCoins(input+","+hashString)
                                             
                                             mailbox.Sender() <! StopMining
 
         | _ -> printfn "Miner Actor received a wrong message"
+        return! loop()
     }
     loop()
 
@@ -92,6 +93,7 @@ let MasterActor (mailbox:Actor<_>) =
 
         | StopMining -> count <- count + 1L
                         if count = int64 actorCount then 
+                            count <- 0L
                             ref <! "ProcessingDone"
                                             
         | _ -> printfn "Master actor received a wrong message"
@@ -101,22 +103,23 @@ let MasterActor (mailbox:Actor<_>) =
 
 let localDispatcherRef = spawn system "localDisp" MasterActor
 
-let commlink = 
-    spawn system "server"
-    <| fun mailbox ->
-        let rec loop() =
-            actor {
-                let! msg = mailbox.Receive()
-                printfn "%s" msg 
-                let command = (msg|>string).Split ','
-                if command.[0].CompareTo("Job")=0 then
-                    
-                    localDispatcherRef <! StartMining(command.[2]|>int)
-                    ref <- mailbox.Sender()
+let Server (mailbox:Actor<_>) = 
+    let rec loop() =
+        actor {
+            let! msg = mailbox.Receive()
+            // printfn "%s" msg 
+            let command = (msg|>string).Split ','
 
-                return! loop() 
-            }
-        loop()
+            match command.[0] with
+            | "Job" -> localDispatcherRef <! StartMining(command.[2]|>int)
+                       ref <- mailbox.Sender()
+            | _ -> printfn "Server actor received a wrong message"
+            return! loop() 
+        }
+    loop()
+
+let commlink = spawn system "Server" Server
+
 
 // let echoClient = system.ActorSelection(
 //                             "akka.tcp://RemoteFSharp@localhost:8778/user/EchoServer")
