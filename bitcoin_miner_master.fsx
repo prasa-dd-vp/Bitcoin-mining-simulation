@@ -1,11 +1,12 @@
+#time "on"
 #r "nuget: Akka.FSharp" 
 #r "nuget: Akka.Remote"
+
 open System
 open Akka.Actor
 open Akka.Configuration
 open Akka.FSharp
 open System.Security.Cryptography
-
 
 let configuration = 
     ConfigurationFactory.ParseString(
@@ -28,20 +29,23 @@ let configuration =
             }
         }")
 
-type ActorMsg =
+//union of commands to an actor
+type Command =
     | StartMining of int
     | MineCoins of int*int
     | PrintCoins of string
     | StopMining
 
+//Command line argument
 let zeroCount = fsi.CommandLineArgs.[1] |> int
 
-let mutable count=0L //to keep track of the workers
+let mutable idleActorCount=0
 let actorCount = System.Environment.ProcessorCount
-let system = ActorSystem.Create("RemoteFSharp", configuration)
+let system = ActorSystem.Create("MainFSharp", configuration)
+let gatorId = "harinisrinivasan"
 
-//Print actor to print the input string and hash value
-let PrintingActor (mailbox:Actor<_>)=
+//Print actor to print the mined coins
+let Printer (mailbox:Actor<_>)=
     let rec loop()=actor{
         let! msg = mailbox.Receive()
         match msg with
@@ -53,18 +57,16 @@ let PrintingActor (mailbox:Actor<_>)=
         return! loop()
     }
     loop()
-let printRef = spawn system "PrintingActor" PrintingActor 
+let printRef = spawn system "Printer" Printer 
 
-// let isValidHash = fun (x:string,y:int) -> int64 ("0x" + x.[0..y-1]) = 0L
-
-//Miner actor
-let MinerActor (mailbox:Actor<_>)=
+//Miner actor to generate coins
+let Miner (mailbox:Actor<_>)=
     let rec loop()=actor{
         let! msg = mailbox.Receive()
         match msg with 
         | MineCoins(zeroCount, actorId) ->  let hashObj = SHA256Managed.Create()
                                             for i in 1 .. actorCount .. 10000000 do
-                                                let  input = "harinisrinivasan"+ string (i+actorId)
+                                                let  input = gatorId + string (i+actorId)
                                                 let hashString = input 
                                                                 |> System.Text.Encoding.ASCII.GetBytes 
                                                                 |> hashObj.ComputeHash
@@ -81,51 +83,46 @@ let MinerActor (mailbox:Actor<_>)=
     }
     loop()
 
-let workersList=[for a in 1 .. actorCount do yield(spawn system ("Job" + (string a)) MinerActor)]
-
-//Master Actor
-let DispatcherActor (mailbox:Actor<_>) =
+//Initiator Actor
+let Initiator (mailbox:Actor<_>) =
     let rec loop()=actor{
         let! msg = mailbox.Receive()
         match msg with 
-        | StartMining(zeroCount) ->
-                                printfn "In Dispatcher"
-                                for i in 0 .. actorCount-1 do //distributing work to the workers
-                                    workersList.Item(i) <! MineCoins(zeroCount, i) //sending message to worker
+        | StartMining(zeroCount) -> let actorRefList = [for a in 1 .. actorCount do yield(spawn system ("Actor" + (string a)) Miner)]
+                                    for i in 0 .. actorCount-1 do //distributing work to the workers
+                                        actorRefList.Item(i) <! MineCoins(zeroCount, i) //sending message to worker
 
-        | StopMining -> count <- count + 1L
-                        if count = int64 actorCount then 
-                            count <- 0L
+        | StopMining             -> idleActorCount <- idleActorCount + 1
+                                    if idleActorCount = actorCount then 
+                                        idleActorCount <- 0
                                             
-        | _ -> printfn "Master actor received a wrong message"
+        | _                      -> printfn "Master actor received a wrong message"
         return! loop()
     }
     loop()
 
-let localDispatcherRef = spawn system "localDisp" DispatcherActor
-
+//Master Actor
 let Master (mailbox:Actor<_>) = 
-    let rec loop() =
-        actor {
-            let! msg = mailbox.Receive()
-            // printfn "%s" msg 
-            let command = (msg|>string).Split ','
+    let rec loop() = actor {
+        let! msg = mailbox.Receive()
+        let command = (msg|>string).Split ','
 
-            match command.[0] with
-            | "StartMining" -> localDispatcherRef <! StartMining(zeroCount)
-            | "Available" -> mailbox.Sender() <! "StartMining," + string zeroCount 
-            | "PrintCoins" ->   printRef <! PrintCoins(command.[1]+","+ command.[2])
-            | "WorkDone" -> system.Terminate()
-            | _ -> printfn "Server actor received a wrong message"
-            return! loop() 
-        }
+        match command.[0] with
+        | "StartMining" -> let initiatorRef = spawn system "Initiator" Initiator
+                           initiatorRef <! StartMining(zeroCount)
+        
+        | "Available"   -> mailbox.Sender() <! "StartMining," + string zeroCount 
+        
+        | "PrintCoins"  -> printRef <! PrintCoins(command.[1]+","+ command.[2])
+        
+        | "WorkDone"    -> system.Terminate()
+        
+        | _             -> printfn "Master actor received a wrong message"
+        return! loop() 
+    }
     loop()
 
-let commlink = spawn system "Master" Master
-
-commlink <! "StartMining"
-
+let masterRef = spawn system "Master" Master
+masterRef <! "StartMining"
 
 system.WhenTerminated.Wait()
-
-//system.Terminate()
