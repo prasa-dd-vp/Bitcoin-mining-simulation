@@ -7,12 +7,11 @@ open Akka.FSharp
 open System.Security.Cryptography
 
 //Command line arguments
-let zeroCount = fsi.CommandLineArgs.[1] |> int
-let serverip = fsi.CommandLineArgs.[2] |> string
-let port = fsi.CommandLineArgs.[3] |>string
+let serverip = fsi.CommandLineArgs.[1] |> string
+let port = fsi.CommandLineArgs.[2] |>string
 
 //Actor server address
-let addr = "akka.tcp://RemoteFSharp@" + serverip + ":" + port + "/user/Server"
+let addr = "akka.tcp://RemoteFSharp@" + serverip + ":" + port + "/user/Master"
 
 let mutable count=0
 let actorCount = System.Environment.ProcessorCount
@@ -33,6 +32,7 @@ let configuration =
         }")
 
 let system = ActorSystem.Create("ClientFsharp", configuration)
+let masterRef =  system.ActorSelection(addr)
 
 //union of messages to an actor
 type ActorMsg =
@@ -47,9 +47,7 @@ let PrintingActor (mailbox:Actor<_>)=
         let! msg = mailbox.Receive()
         match msg with
         | PrintCoins(result) ->
-            let resultArr = result.Split ',' 
-            printfn "The input is = %s   The hash value is %s" resultArr.[0] resultArr.[1]
-            
+            masterRef <! "PrintCoins," + result
         | _ -> failwith "unknown message"
         return! loop()
     }
@@ -62,8 +60,8 @@ let MinerActor (mailbox:Actor<_>)=
         let! msg = mailbox.Receive()
         match msg with 
         | MineCoins(zeroCount, actorId) ->  let hashObj = SHA256Managed.Create()
-                                            for i in 0 .. actorCount .. 1000000 do
-                                                let  input = "venkateshpramani"+ string (i+actorId)
+                                            for i in 0 .. actorCount .. 10000000 do
+                                                let input = "venkateshpramani"+ string (i+actorId)
                                                 let hashString = input 
                                                                 |> System.Text.Encoding.ASCII.GetBytes 
                                                                 |> hashObj.ComputeHash
@@ -92,7 +90,7 @@ let MasterActor (mailbox:Actor<_>) =
 
         | StopMining -> count <- count + 1
                         if count = actorCount then 
-                            localWorkDone <- true
+                            masterRef <! "WorkDone"
                                             
         | _ -> printfn "Master actor received a wrong message"
         return! loop()
@@ -100,32 +98,23 @@ let MasterActor (mailbox:Actor<_>) =
     loop()
 
 let mutable remoteWorkDone = false
-let Client (mailbox:Actor<_>)= 
+let Worker (mailbox:Actor<_>)= 
     let rec loop() =
         actor {
             let! msg = mailbox.Receive()
-            // printfn "%s" msg 
-            let response =msg|>string
-            let command = (response).Split ','
-            if command.[0].CompareTo("init")=0 then
-                let echoClient = system.ActorSelection(addr)
-                let msgToServer = "Job,harinisrinivasan," + (zeroCount|>string)
-                echoClient <! msgToServer
-                let actorRef = spawn system "MasterActor" MasterActor
-                actorRef <! StartMining(zeroCount)
-            elif response.CompareTo("ProcessingDone")=0 then
-                system.Terminate() |> ignore
-                remoteWorkDone <- true
-            else
-                printRef <! PrintCoins(msg)
-
+            printfn "%s" msg 
+            let response = msg |> string
+            let command = response.Split(',')
+            match command.[0] with
+            | "PingMaster" ->   masterRef <! "Available"
+            | "StartMining" ->  let actorRef = spawn system "MasterActor" MasterActor
+                                actorRef <! StartMining(int command.[1])
             return! loop() 
         }
     loop()
-let commlink = spawn system "Client" Client
+let commlink = spawn system "Worker" Worker
 
-
-commlink <! "init"
+commlink <! "PingMaster"
 
 
 system.WhenTerminated.Wait()
