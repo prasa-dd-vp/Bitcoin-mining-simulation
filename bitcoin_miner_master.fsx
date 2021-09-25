@@ -93,7 +93,8 @@ let Initiator (mailbox:Actor<_>) =
                                         actorRefList.Item(i) <! MineCoins(zeroCount, i) //sending message to worker
 
         | StopMining             -> idleActorCount <- idleActorCount + 1
-                                    if idleActorCount = actorCount then 
+                                    if idleActorCount = actorCount then
+                                        printfn "Workdone by master" 
                                         idleActorCount <- 0
                                             
         | _                      -> printfn "Master actor received a wrong message"
@@ -108,14 +109,15 @@ let Master (mailbox:Actor<_>) =
         let command = (msg|>string).Split ','
 
         match command.[0] with
-        | "StartMining" -> let initiatorRef = spawn system "Initiator" Initiator
-                           initiatorRef <! StartMining(zeroCount)
+        | "StartMining" ->  let initiatorRef = spawn system "Initiator" Initiator
+                            initiatorRef <! StartMining(zeroCount)
         
-        | "Available"   -> mailbox.Sender() <! "StartMining," + string zeroCount 
+        | "Available"   ->  mailbox.Sender() <! "StartMining," + string zeroCount 
         
-        | "PrintCoins"  -> printRef <! PrintCoins(command.[1]+","+ command.[2])
+        | "PrintCoins"  ->  printRef <! PrintCoins(command.[1]+","+ command.[2])
         
-        | "WorkDone"    -> system.Terminate()
+        | "WorkDone"    ->  printfn "WorkDone by one of the worker"
+                            // system.Terminate()
         
         | _             -> printfn "Master actor received a wrong message"
         return! loop() 
