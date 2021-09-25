@@ -10,9 +10,10 @@ let zeroCount = fsi.CommandLineArgs.[1] |> int
 
 //Getting processor count
 let actorCount = System.Environment.ProcessorCount
+// let actorCount = 8
 
 //Actor count
-let mutable count = 0
+let mutable idleActorCount = 0
 
 //creating an actor system
 let system = ActorSystem.Create("FSharp")
@@ -72,8 +73,8 @@ let Master (mailbox:Actor<_>) =
                             for i in 0 .. actorCount-1 do //distributing work to the workers
                                 actorRefList.Item(i) <! MineCoins(zeroCount, i) //sending message to worker
 
-        | StopMining ->     count <- count + 1
-                            if count = actorCount then 
+        | StopMining ->     idleActorCount <- idleActorCount + 1
+                            if idleActorCount = actorCount then 
                                 mailbox.Context.System.Terminate() |> ignore
                                             
         | _ -> printfn "Master actor received a wrong message"

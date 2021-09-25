@@ -13,13 +13,7 @@ let configuration =
         @"akka {
             actor {
                 provider = ""Akka.Remote.RemoteActorRefProvider, Akka.Remote""
-                debug : {
-                    receive : on
-                    autoreceive : on
-                    lifecycle : on
-                    event-stream : on
-                    unhandled : on
-                }
+                
             }
             remote {
                 helios.tcp {
